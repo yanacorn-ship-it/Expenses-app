@@ -1,17 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Meital & Yana Expenses</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #F7F8FA; font-family: Inter, system-ui, sans-serif; color: #1A1D23; }
-input, select, textarea, button { font-family: inherit; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meital & Yana Expenses</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #F7F8FA; font-family: Inter, system-ui, sans-serif; color: #1A1D23; }
+    input, select, textarea, button { font-family: inherit; }
+  </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px"><div style="font-size:36px">☁️</div><div style="font-weight:700;font-size:18px">Loading...</div></div></div>
+
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -32,6 +33,7 @@ firebase.initializeApp({
 
 const db = firebase.firestore();
 const DOC = db.collection("expenses").doc("shared");
+
 const C = {
   bg:"#F7F8FA", card:"#FFFFFF", border:"#E4E7EC", text:"#1A1D23",
   muted:"#6B7280", p1:"#4F6EF7", p2:"#E05C97",
@@ -73,6 +75,7 @@ function AttachmentView({ attachment }) {
     </div>
   );
 }
+
 function App() {
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState("idle");
@@ -135,6 +138,7 @@ function App() {
       setSyncStatus("error");
     }
   }
+
   const recurForMonth = useMemo(() => recurring.map(r => ({
     ...r, id:"recur-"+r.id,
     date:`${year}-${String(month+1).padStart(2,"0")}-01`,
@@ -205,74 +209,8 @@ function App() {
   const nameOf = k => k==="person1" ? person1 : person2;
   const colorOf = k => k==="person1" ? C.p1 : C.p2;
   const canSubmit = form.description.trim() && form.amount && form.paidBy && (form.splitType==="50-50" || form.chargedTo);
-  const syncLabel = syncStatus==="saving" ? "⏳ Saving…" : syncStatus==="synced" ? "☁ Saved & Synced" : syncStatus==="error" ? "❌ Retry Save" : "☁️ Save & Sync";
-  const syncColor = syncStatus==="synced" ? C.green : syncStatus==="error" ? C.red : syncStatus==="saving" ? C.muted : C.accent;
-  const lastSavedLabel = lastSaved
-    ? "Last saved: " + lastSaved.toLocaleDateString("he-IL",{timeZone:"Asia/Jerusalem",day:"2-digit",month:"2-digit",year:"numeric"}) + " at " + lastSaved.toLocaleTimeString("he-IL",{timeZone:"Asia/Jerusalem",hour:"2-digit",minute:"2-digit"})
-    : "Not saved yet";
-  if (loading) return (
-    <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
-      <div style={{ fontSize:36 }}>☁️</div>
-      <div style={{ fontWeight:700, fontSize:18 }}>Loading your expenses…</div>
-      <div style={{ color:C.muted, fontSize:13 }}>Connecting to Firebase</div>
-    </div>
-  );
-
-  return (
-    <div style={{ minHeight:"100vh", background:C.bg }}>
-      <div style={{ maxWidth:780, margin:"0 auto", padding:"32px 16px 64px" }}>
-
-        <div style={{ marginBottom:32 }}>
-          <div style={{ fontSize:26, fontWeight:800, letterSpacing:-1 }}>💸 Shared Expenses</div>
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:4, fontSize:14, color:C.muted }}>
-            {!editingNames ? <>
-              <span style={{ fontWeight:600, color:C.p1 }}>{person1}</span>
-              <span>&amp;</span>
-              <span style={{ fontWeight:600, color:C.p2 }}>{person2}</span>
-              <button onClick={() => { setTmp1(person1); setTmp2(person2); setEditingNames(true); }} style={{ ...btnStyle, marginLeft:4, background:"none", border:"1px solid "+C.border, fontSize:12, padding:"2px 8px", color:C.muted }}>Edit names</button>
-            </> : <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-              <input value={tmp1} onChange={e => setTmp1(e.target.value)} style={{ ...inpStyle, width:120 }} />
-              <span>&amp;</span>
-              <input value={tmp2} onChange={e => setTmp2(e.target.value)} style={{ ...inpStyle, width:120 }} />
-              <button onClick={() => { setPerson1(tmp1||"Meital"); setPerson2(tmp2||"Yana"); setEditingNames(false); setSyncStatus("idle"); }} style={{ ...btnStyle, background:C.accent, color:"#fff" }}>Save</button>
-              <button onClick={() => setEditingNames(false)} style={{ ...btnStyle, background:C.bg, border:"1px solid "+C.border }}>Cancel</button>
-            </div>}
-          </div>
-          <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:10 }}>
-            <button onClick={() => saveToCloud({ person1, person2, expenses, recurring })} disabled={syncStatus==="saving"}
-              style={{ ...btnStyle, background:syncColor, color:"#fff", fontSize:13, padding:"7px 18px", opacity:syncStatus==="saving"?0.7:1 }}>
-              {syncLabel}
-            </button>
-            <span style={{ fontSize:11, color:syncStatus==="error"?C.red:C.muted }}>
-              {syncStatus==="error" ? "Save failed — check connection" : lastSavedLabel}
-            </span>
-          </div>
-        </div>
-        <div style={cardStyle}>
-          <div style={{ fontWeight:700, fontSize:16, marginBottom:16 }}>{editId!==null ? "✏️ Edit Expense" : "➕ Add Expense"}</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-            <div style={{ gridColumn:"1 / -1" }}>
-              <label style={lblStyle}>Description *</label>
-              <input value={form.description} onChange={e => setForm(f => ({...f, description:e.target.value}))} placeholder="e.g. Grocery run…" style={inpStyle} />
-            </div>
-            <div>
-              <label style={lblStyle}>Amount (₪) *</label>
-              <input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(f => ({...f, amount:e.target.value}))} placeholder="0.00" style={inpStyle} />
-            </div>
-            <div>
-              <label style={lblStyle}>Type</label>
-              <select value={form.type} onChange={e => setForm(f => ({...f, type:e.target.value}))} style={inpStyle}>
-                <option value="one-time">One-time</option>
-                <option value="recurring">🔁 Recurring</option>
-              </select>
-            </div>
-            {form.type==="one-time" && <div>
-              <label style={lblStyle}>Date *</label>
-              <input type="date" value={form.date} onChange={e => setForm(f => ({...f, date:e.target.value}))} style={inpStyle} />
-            </div>}
-            <div>
-              <label style={lblStyle}>Paid by *</label>
-              <select value={form.paidBy} onChange={e => setForm(f => ({...f, paidBy:e.target.value}))} style={inpStyle}>
+  const syncLabel = syncStatus==="saving" ? "⏳ Saving…" : syncStatus==="synced" ? "☁️ Saved & Synced" : syncStatus==="error" ? "❌ Retry Save" : "☁️ Save & Sync";
+  const syncColor = syncStatus==="synced" ? C.green : syncStatus==="error" ? C.red : syncStatus==="saving" ? C.mu
                 <option value="">Select…</option>
                 <option value="person1">{person1}</option>
                 <option value="person2">{person2}</option>
@@ -335,7 +273,9 @@ function App() {
             </button>
             {editId!==null && <button onClick={() => { setEditId(null); setForm({...BLANK}); setAttachment(null); setShowNote(false); }} style={{ ...btnStyle, background:C.bg, border:"1px solid "+C.border }}>Cancel</button>}
           </div>
-                {recurring.length>0 && <div style={{ ...cardStyle, border:"1px solid "+C.rBorder, background:C.rBg }}>
+        </div>
+
+        {recurring.length>0 && <div style={{ ...cardStyle, border:"1px solid "+C.rBorder, background:C.rBg }}>
           <button onClick={() => setShowRecur(s => !s)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, display:"flex", alignItems:"center", gap:8, width:"100%" }}>
             <span style={{ fontWeight:700, fontSize:15, color:"#3730A3" }}>🔁 Recurring Expenses ({recurring.length})</span>
             <span style={{ marginLeft:"auto", color:C.muted, fontSize:13 }}>{showRecur?"▴ Hide":"▾ Show"}</span>
@@ -375,7 +315,8 @@ function App() {
               : <button onClick={() => setResetConfirm(true)} style={{ ...btnStyle, fontSize:12, padding:"4px 12px", color:C.red, border:"1px solid #FECACA", background:C.redBg }}>🗑 Reset month</button>}
           </div>}
         </div>
-       {allExpenses.length>0 && <div style={{ ...cardStyle, background:settlement.diff===0?C.greenBg:C.card }}>
+
+        {allExpenses.length>0 && <div style={{ ...cardStyle, background:settlement.diff===0?C.greenBg:C.card }}>
           <div style={{ fontWeight:700, fontSize:16, marginBottom:14 }}>📊 {MONTHS[month]} Settlement</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:16 }}>
             {[{label:person1+" paid",value:settlement.p1Paid,color:C.p1},{label:person2+" paid",value:settlement.p2Paid,color:C.p2},{label:"Total",value:settlement.total,color:C.text}].map(({label,value,color}) =>
@@ -390,6 +331,7 @@ function App() {
               : <><span style={{color:C.p1}}>{person1}</span> owes <span style={{color:C.p2}}>{person2}</span> <span style={{color:C.green}}>{fmt(settlement.diff)}</span></>}
           </div>
         </div>}
+
         {allExpenses.length===0
           ? <div style={{ ...cardStyle, textAlign:"center", color:C.muted, padding:"40px 24px" }}>
               <div style={{ fontSize:36, marginBottom:8 }}>🧾</div>
