@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Meital & Yana Expenses</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #F7F8FA; font-family: Inter, system-ui, sans-serif; color: #1A1D23; }
+input, select, textarea, button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useMemo, useRef, useEffect } = React;
+
+firebase.initializeApp({
+  apiKey: "AIzaSyDHIy9lGIFA1p7xSbXaA0goseSs4Gh3df4",
+  authDomain: "yana-and-meital---expenses.firebaseapp.com",
+  projectId: "yana-and-meital---expenses",
+  storageBucket: "yana-and-meital---expenses.firebasestorage.app",
+  messagingSenderId: "723901235452",
+  appId: "1:723901235452:web:bb98d477d1d9901dbe9779"
+});
+
+const db = firebase.firestore();
+const DOC = db.collection("expenses").doc("shared");
+const C = {
+  bg:"#F7F8FA", card:"#FFFFFF", border:"#E4E7EC", text:"#1A1D23",
+  muted:"#6B7280", p1:"#4F6EF7", p2:"#E05C97",
+  green:"#16A34A", greenBg:"#F0FDF4", red:"#DC2626", redBg:"#FEF2F2",
+  accent:"#4F6EF7", rBg:"#F0F4FF", rBorder:"#C7D2FE",
+  fBg:"#FFFBEB", fBorder:"#FCD34D",
+};
+
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const today = new Date();
+const fmt = n => "₪" + Math.abs(n).toFixed(2);
+const BLANK = { description:"", amount:"", date:today.toISOString().slice(0,10), paidBy:"", category:"Other", note:"", type:"one-time", splitType:"50-50", chargedTo:"" };
+
+const cardStyle = { background:C.card, borderRadius:14, border:"1px solid "+C.border, padding:"20px 22px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", marginBottom:16 };
+const inpStyle = { border:"1px solid "+C.border, borderRadius:8, padding:"8px 12px", fontSize:14, outline:"none", background:"#FAFAFA", color:C.text, width:"100%", boxSizing:"border-box" };
+const lblStyle = { display:"block", fontSize:12, fontWeight:600, color:C.muted, marginBottom:5, textTransform:"uppercase", letterSpacing:"0.4px" };
+const btnStyle = { border:"none", borderRadius:8, padding:"8px 16px", fontSize:14, cursor:"pointer", fontWeight:600 };
+
+function Badge({ category }) {
+  const m = { Food:"#FDE68A", Rent:"#BFDBFE", Utilities:"#DDD6FE", Transport:"#BBF7D0", Entertainment:"#FBCFE8", Health:"#FED7AA", Other:"#E5E7EB" };
+  return <span style={{ background:m[category]||m.Other, borderRadius:12, padding:"2px 10px", fontSize:12, fontWeight:600, color:"#374151" }}>{category}</span>;
+}
+
+function AttachmentView({ attachment }) {
+  const [open, setOpen] = useState(false);
+  if (!attachment || !attachment.name) return null;
+  const isImg = attachment.type && attachment.type.startsWith("image/");
+  return (
+    <div style={{ marginTop:6 }}>
+      <button onClick={() => setOpen(s => !s)} style={{ background:"none", border:"none", cursor:"pointer", color:C.accent, fontSize:12, fontWeight:600, padding:0 }}>
+        {isImg ? "🖼️" : "📄"} {open ? "Hide" : "View"} receipt — {attachment.name}
+      </button>
+      {open && isImg && attachment.dataUrl && <img src={attachment.dataUrl} style={{ display:"block", marginTop:8, maxWidth:"100%", maxHeight:300, borderRadius:8, border:"1px solid "+C.border }} />}
+      {open && !isImg && attachment.dataUrl && (
+        <div style={{ marginTop:8, padding:"8px 12px", background:C.bg, borderRadius:8, border:"1px solid "+C.border, fontSize:12, color:C.muted }}>
+          PDF stored · <a href={attachment.dataUrl} download={attachment.name} style={{ color:C.accent, fontWeight:600 }}>Download</a>
+        </div>
+      )}
+    </div>
+  );
+}
+function App() {
+  const [loading, setLoading] = useState(true);
+  const [syncStatus, setSyncStatus] = useState("idle");
+  const [lastSaved, setLastSaved] = useState(null);
+  const [person1, setPerson1] = useState("Meital");
+  const [person2, setPerson2] = useState("Yana");
+  const [editingNames, setEditingNames] = useState(false);
+  const [tmp1, setTmp1] = useState("Meital");
+  const [tmp2, setTmp2] = useState("Yana");
+  const [expenses, setExpenses] = useState([]);
+  const [recurring, setRecurring] = useState([]);
+  const [showRecur, setShowRecur] = useState(true);
+  const [removeConfirm, setRemoveConfirm] = useState(null);
+  const [form, setForm] = useState({...BLANK});
+  const [attachment, setAttachment] = useState(null);
+  const [showNote, setShowNote] = useState(false);
+  const [month, setMonth] = useState(today.getMonth());
+  const [year, setYear] = useState(today.getFullYear());
+  const [editId, setEditId] = useState(null);
+  const [delConfirm, setDelConfirm] = useState(null);
+  const [resetConfirm, setResetConfirm] = useState(false);
+  const fileRef = useRef();
+
+  useEffect(() => {
+    const unsub = DOC.onSnapshot(snap => {
+      if (snap.exists) {
+        const d = snap.data();
+        if (d.person1) { setPerson1(d.person1); setTmp1(d.person1); }
+        if (d.person2) { setPerson2(d.person2); setTmp2(d.person2); }
+        if (d.expenses) setExpenses(d.expenses);
+        if (d.recurring) setRecurring(d.recurring);
+        if (d.lastSaved) setLastSaved(new Date(d.lastSaved));
+      }
+      setLoading(false);
+    }, () => setLoading(false));
+    return () => unsub();
+  }, []);
+
+  async function saveToCloud(overrides) {
+    setSyncStatus("saving");
+    const now = new Date();
+    const data = overrides || { person1, person2, expenses, recurring };
+    try {
+      await DOC.set({
+        ...data,
+        lastSaved: now.toISOString(),
+        expenses: data.expenses.map(e => ({
+          ...e,
+          attachment: e.attachment ? { name:e.attachment.name, type:e.attachment.type, size:e.attachment.size, dataUrl:null } : null
+        })),
+        recurring: data.recurring.map(r => ({
+          ...r,
+          attachment: r.attachment ? { name:r.attachment.name, type:r.attachment.type, size:r.attachment.size, dataUrl:null } : null
+        })),
+      });
+      setLastSaved(now);
+      setSyncStatus("synced");
+    } catch(err) {
+      console.error(err);
+      setSyncStatus("error");
+    }
+  }
+  const recurForMonth = useMemo(() => recurring.map(r => ({
+    ...r, id:"recur-"+r.id,
+    date:`${year}-${String(month+1).padStart(2,"0")}-01`,
+    isRecurring:true,
+  })), [recurring, month, year]);
+
+  const oneTime = useMemo(() => expenses.filter(e => {
+    const d = new Date(e.date+"T12:00:00");
+    return d.getMonth()===month && d.getFullYear()===year;
+  }), [expenses, month, year]);
+
+  const allExpenses = useMemo(() => [...recurForMonth, ...oneTime]
+    .sort((a,b) => a.isRecurring===b.isRecurring ? b.date.localeCompare(a.date) : (a.isRecurring ? -1 : 1)),
+    [recurForMonth, oneTime]);
+
+  const settlement = useMemo(() => {
+    let p1Paid=0, p2Paid=0, p1Owes=0, p2Owes=0;
+    allExpenses.forEach(e => {
+      if (e.paidBy==="person1") p1Paid+=e.amount; else p2Paid+=e.amount;
+      if (e.splitType==="full") {
+        if (e.chargedTo==="person1") p1Owes+=e.amount; else p2Owes+=e.amount;
+      } else {
+        p1Owes+=e.amount/2; p2Owes+=e.amount/2;
+      }
+    });
+    return { p1Paid, p2Paid, total:p1Paid+p2Paid, diff:p1Paid-p1Owes };
+  }, [allExpenses]);
+
+  function onFile(e) {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => setAttachment({ name:f.name, type:f.type, size:f.size, dataUrl:ev.target.result });
+    r.readAsDataURL(f); e.target.value="";
+  }
+
+  function submit() {
+    if (!form.description.trim() || !form.amount || !form.paidBy) return;
+    if (form.splitType==="full" && !form.chargedTo) return;
+    const base = {
+      description:form.description.trim(), amount:parseFloat(form.amount),
+      paidBy:form.paidBy, category:form.category, note:form.note.trim(),
+      attachment:attachment||null, splitType:form.splitType,
+      chargedTo:form.splitType==="full" ? form.chargedTo : null,
+    };
+    let newExp=expenses, newRec=recurring;
+    if (form.type==="recurring") {
+      const t = {...base, id:editId??Date.now()};
+      if (editId!==null && String(editId).startsWith("recur-")) {
+        const rid = Number(editId.replace("recur-",""));
+        newRec = recurring.map(r => r.id===rid ? {...t,id:rid} : r);
+      } else { newRec = [...recurring, t]; }
+      setRecurring(newRec);
+    } else {
+      const entry = {...base, id:editId??Date.now(), date:form.date, isRecurring:false};
+      if (editId!==null && !String(editId).startsWith("recur-")) {
+        newExp = expenses.map(e => e.id===editId ? entry : e);
+      } else { newExp = [entry, ...expenses]; }
+      setExpenses(newExp);
+    }
+    setEditId(null); setForm({...BLANK, paidBy:form.paidBy}); setAttachment(null); setShowNote(false); setSyncStatus("idle");
+  }
+
+  function startEdit(e) {
+    setForm({ description:e.description, amount:String(e.amount), date:e.isRecurring?today.toISOString().slice(0,10):e.date, paidBy:e.paidBy, category:e.category, note:e.note, type:e.isRecurring?"recurring":"one-time", splitType:e.splitType||"50-50", chargedTo:e.chargedTo||"" });
+    setAttachment(e.attachment||null); setShowNote(!!(e.note||e.attachment)); setEditId(e.id);
+  }
+
+  const nameOf = k => k==="person1" ? person1 : person2;
+  const colorOf = k => k==="person1" ? C.p1 : C.p2;
+  const canSubmit = form.description.trim() && form.amount && form.paidBy && (form.splitType==="50-50" || form.chargedTo);
+  const syncLabel = syncStatus==="saving" ? "⏳ Saving…" : syncStatus==="synced" ? "☁ Saved & Synced" : syncStatus==="error" ? "❌ Retry Save" : "☁️ Save & Sync";
+  const syncColor = syncStatus==="synced" ? C.green : syncStatus==="error" ? C.red : syncStatus==="saving" ? C.muted : C.accent;
+  const lastSavedLabel = lastSaved
+    ? "Last saved: " + lastSaved.toLocaleDateString("he-IL",{timeZone:"Asia/Jerusalem",day:"2-digit",month:"2-digit",year:"numeric"}) + " at " + lastSaved.toLocaleTimeString("he-IL",{timeZone:"Asia/Jerusalem",hour:"2-digit",minute:"2-digit"})
+    : "Not saved yet";
+  if (loading) return (
+    <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
+      <div style={{ fontSize:36 }}>☁️</div>
+      <div style={{ fontWeight:700, fontSize:18 }}>Loading your expenses…</div>
+      <div style={{ color:C.muted, fontSize:13 }}>Connecting to Firebase</div>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bg }}>
+      <div style={{ maxWidth:780, margin:"0 auto", padding:"32px 16px 64px" }}>
+
+        <div style={{ marginBottom:32 }}>
+          <div style={{ fontSize:26, fontWeight:800, letterSpacing:-1 }}>💸 Shared Expenses</div>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:4, fontSize:14, color:C.muted }}>
+            {!editingNames ? <>
+              <span style={{ fontWeight:600, color:C.p1 }}>{person1}</span>
+              <span>&amp;</span>
+              <span style={{ fontWeight:600, color:C.p2 }}>{person2}</span>
+              <button onClick={() => { setTmp1(person1); setTmp2(person2); setEditingNames(true); }} style={{ ...btnStyle, marginLeft:4, background:"none", border:"1px solid "+C.border, fontSize:12, padding:"2px 8px", color:C.muted }}>Edit names</button>
+            </> : <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+              <input value={tmp1} onChange={e => setTmp1(e.target.value)} style={{ ...inpStyle, width:120 }} />
+              <span>&amp;</span>
+              <input value={tmp2} onChange={e => setTmp2(e.target.value)} style={{ ...inpStyle, width:120 }} />
+              <button onClick={() => { setPerson1(tmp1||"Meital"); setPerson2(tmp2||"Yana"); setEditingNames(false); setSyncStatus("idle"); }} style={{ ...btnStyle, background:C.accent, color:"#fff" }}>Save</button>
+              <button onClick={() => setEditingNames(false)} style={{ ...btnStyle, background:C.bg, border:"1px solid "+C.border }}>Cancel</button>
+            </div>}
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:10 }}>
+            <button onClick={() => saveToCloud({ person1, person2, expenses, recurring })} disabled={syncStatus==="saving"}
+              style={{ ...btnStyle, background:syncColor, color:"#fff", fontSize:13, padding:"7px 18px", opacity:syncStatus==="saving"?0.7:1 }}>
+              {syncLabel}
+            </button>
+            <span style={{ fontSize:11, color:syncStatus==="error"?C.red:C.muted }}>
+              {syncStatus==="error" ? "Save failed — check connection" : lastSavedLabel}
+            </span>
+          </div>
+        </div>
+        <div style={cardStyle}>
+          <div style={{ fontWeight:700, fontSize:16, marginBottom:16 }}>{editId!==null ? "✏️ Edit Expense" : "➕ Add Expense"}</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <div style={{ gridColumn:"1 / -1" }}>
+              <label style={lblStyle}>Description *</label>
+              <input value={form.description} onChange={e => setForm(f => ({...f, description:e.target.value}))} placeholder="e.g. Grocery run…" style={inpStyle} />
+            </div>
+            <div>
+              <label style={lblStyle}>Amount (₪) *</label>
+              <input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(f => ({...f, amount:e.target.value}))} placeholder="0.00" style={inpStyle} />
+            </div>
+            <div>
+              <label style={lblStyle}>Type</label>
+              <select value={form.type} onChange={e => setForm(f => ({...f, type:e.target.value}))} style={inpStyle}>
+                <option value="one-time">One-time</option>
+                <option value="recurring">🔁 Recurring</option>
+              </select>
+            </div>
+            {form.type==="one-time" && <div>
+              <label style={lblStyle}>Date *</label>
+              <input type="date" value={form.date} onChange={e => setForm(f => ({...f, date:e.target.value}))} style={inpStyle} />
+            </div>}
+            <div>
+              <label style={lblStyle}>Paid by *</label>
+              <select value={form.paidBy} onChange={e => setForm(f => ({...f, paidBy:e.target.value}))} style={inpStyle}>
+                <option value="">Select…</option>
+                <option value="person1">{person1}</option>
+                <option value="person2">{person2}</option>
+              </select>
+            </div>
+            <div>
+              <label style={lblStyle}>Category</label>
+              <select value={form.category} onChange={e => setForm(f => ({...f, category:e.target.value}))} style={inpStyle}>
+                {["Food","Rent","Utilities","Transport","Entertainment","Health","Other"].map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ marginTop:14, padding:"14px 16px", background:form.splitType==="full"?C.fBg:C.bg, border:"1px solid "+(form.splitType==="full"?C.fBorder:C.border), borderRadius:10 }}>
+            <label style={{ ...lblStyle, marginBottom:10 }}>How to split</label>
+            <div style={{ display:"flex", gap:10 }}>
+              <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", flex:1, padding:"10px 14px", borderRadius:8, border:"2px solid "+(form.splitType==="50-50"?C.accent:C.border), background:form.splitType==="50-50"?"#EEF2FF":C.card }}>
+                <input type="radio" name="split" checked={form.splitType==="50-50"} onChange={() => setForm(f => ({...f, splitType:"50-50", chargedTo:""}))} />
+                <div><div style={{ fontWeight:700, fontSize:13 }}>50 / 50</div><div style={{ fontSize:11, color:C.muted }}>Split equally</div></div>
+              </label>
+              <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", flex:1, padding:"10px 14px", borderRadius:8, border:"2px solid "+(form.splitType==="full"?"#F59E0B":C.border), background:form.splitType==="full"?C.fBg:C.card }}>
+                <input type="radio" name="split" checked={form.splitType==="full"} onChange={() => setForm(f => ({...f, splitType:"full"}))} />
+                <div><div style={{ fontWeight:700, fontSize:13 }}>Full charge</div><div style={{ fontSize:11, color:C.muted }}>100% one person</div></div>
+              </label>
+            </div>
+            {form.splitType==="full" && <div style={{ marginTop:12 }}>
+              <label style={lblStyle}>Charged to *</label>
+              <select value={form.chargedTo} onChange={e => setForm(f => ({...f, chargedTo:e.target.value}))} style={inpStyle}>
+                <option value="">Select…</option>
+                <option value="person1">{person1}</option>
+                <option value="person2">{person2}</option>
+              </select>
+            </div>}
+          </div>
+
+          {form.type==="recurring" && <div style={{ marginTop:12, padding:"10px 14px", background:C.rBg, border:"1px solid "+C.rBorder, borderRadius:8, fontSize:13, color:"#3730A3" }}>🔁 This will appear automatically every month.</div>}
+
+          <div style={{ marginTop:14 }}>
+            <button onClick={() => setShowNote(s => !s)} style={{ background:"none", border:"none", cursor:"pointer", color:C.accent, fontWeight:600, fontSize:13, padding:0 }}>
+              {showNote ? "▾ Hide receipt/note" : "▸ Add receipt/note (optional)"}
+            </button>
+            {showNote && <div style={{ marginTop:10, display:"flex", flexDirection:"column", gap:8 }}>
+              <textarea value={form.note} onChange={e => setForm(f => ({...f, note:e.target.value}))} placeholder="Add a note…" rows={2} style={{ ...inpStyle, resize:"vertical" }} />
+              <div onClick={() => fileRef.current.click()} style={{ border:"2px dashed "+C.border, borderRadius:10, padding:16, textAlign:"center", cursor:"pointer", background:"#FAFBFF", color:C.muted, fontSize:13 }}>
+                <div style={{ fontSize:24, marginBottom:4 }}>📎</div>
+                <div><span style={{ color:C.accent, fontWeight:600 }}>Click to upload</span> or drag and drop</div>
+                <div style={{ fontSize:11, marginTop:2 }}>Photos or PDF</div>
+                <input ref={fileRef} type="file" accept="image/*,.pdf" onChange={onFile} style={{ display:"none" }} />
+              </div>
+              {attachment && <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", background:C.bg, borderRadius:8, border:"1px solid "+C.border }}>
+                <span>📎 {attachment.name}</span>
+                <button onClick={() => setAttachment(null)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:18 }}>×</button>
+              </div>}
+            </div>}
+          </div>
+
+          <div style={{ display:"flex", gap:8, marginTop:16 }}>
+            <button onClick={submit} disabled={!canSubmit} style={{ ...btnStyle, background:canSubmit?C.accent:"#C7D2FE", color:"#fff", flex:1, fontWeight:700, fontSize:15 }}>
+              {editId!==null ? "Save changes" : form.type==="recurring" ? "Add recurring" : "Add expense"}
+            </button>
+            {editId!==null && <button onClick={() => { setEditId(null); setForm({...BLANK}); setAttachment(null); setShowNote(false); }} style={{ ...btnStyle, background:C.bg, border:"1px solid "+C.border }}>Cancel</button>}
+          </div>
+                {recurring.length>0 && <div style={{ ...cardStyle, border:"1px solid "+C.rBorder, background:C.rBg }}>
+          <button onClick={() => setShowRecur(s => !s)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, display:"flex", alignItems:"center", gap:8, width:"100%" }}>
+            <span style={{ fontWeight:700, fontSize:15, color:"#3730A3" }}>🔁 Recurring Expenses ({recurring.length})</span>
+            <span style={{ marginLeft:"auto", color:C.muted, fontSize:13 }}>{showRecur?"▴ Hide":"▾ Show"}</span>
+          </button>
+          {showRecur && <div style={{ marginTop:14, display:"flex", flexDirection:"column", gap:8 }}>
+            {recurring.map(r => <div key={r.id} style={{ background:C.card, borderRadius:10, border:"1px solid "+C.rBorder, padding:"12px 14px", display:"flex", alignItems:"center", gap:12 }}>
+              <div style={{ width:36, height:36, borderRadius:8, background:colorOf(r.paidBy)+"20", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:13, color:colorOf(r.paidBy), flexShrink:0 }}>
+                {nameOf(r.paidBy).slice(0,1).toUpperCase()}
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontWeight:700, fontSize:14 }}>{r.description}</div>
+                <div style={{ fontSize:12, color:C.muted }}>Every month · {nameOf(r.paidBy)} · {fmt(r.amount)}</div>
+              </div>
+              <div style={{ display:"flex", gap:6 }}>
+                <button onClick={() => startEdit({...r, isRecurring:true, id:"recur-"+r.id})} style={{ ...btnStyle, fontSize:12, padding:"3px 10px", background:C.bg, border:"1px solid "+C.border }}>Edit</button>
+                {removeConfirm===r.id
+                  ? <><button onClick={() => { setRecurring(p => p.filter(x => x.id!==r.id)); setRemoveConfirm(null); setSyncStatus("idle"); }} style={{ ...btnStyle, fontSize:12, padding:"3px 10px", background:C.red, color:"#fff" }}>Remove</button>
+                     <button onClick={() => setRemoveConfirm(null)} style={{ ...btnStyle, fontSize:12, padding:"3px 10px" }}>Cancel</button></>
+                  : <button onClick={() => setRemoveConfirm(r.id)} style={{ ...btnStyle, fontSize:12, padding:"3px 10px", color:C.red, border:"1px solid #FECACA", background:C.redBg }}>Remove</button>}
+              </div>
+            </div>)}
+          </div>}
+        </div>}
+
+        <div style={{ display:"flex", gap:10, alignItems:"center", margin:"28px 0 16px", flexWrap:"wrap" }}>
+          <span style={{ fontWeight:700, fontSize:17 }}>📅 Month</span>
+          <select value={month} onChange={e => setMonth(Number(e.target.value))} style={{ ...inpStyle, width:"auto" }}>
+            {MONTHS.map((m,i) => <option key={m} value={i}>{m}</option>)}
+          </select>
+          <input type="number" value={year} onChange={e => setYear(Number(e.target.value))} style={{ ...inpStyle, width:80 }} />
+          <span style={{ color:C.muted, fontSize:13 }}>{allExpenses.length} expense{allExpenses.length!==1?"s":""}</span>
+          {oneTime.length>0 && <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
+            {resetConfirm
+              ? <><span style={{ fontSize:13, color:C.red, fontWeight:600 }}>Clear {MONTHS[month]}?</span>
+                  <button onClick={() => { setExpenses(p => p.filter(e => { const d=new Date(e.date+"T12:00:00"); return !(d.getMonth()===month&&d.getFullYear()===year); })); setResetConfirm(false); setSyncStatus("idle"); }} style={{ ...btnStyle, fontSize:12, padding:"4px 12px", background:C.red, color:"#fff" }}>Yes</button>
+                  <button onClick={() => setResetConfirm(false)} style={{ ...btnStyle, fontSize:12, padding:"4px 12px", background:C.bg, border:"1px solid "+C.border }}>No</button></>
+              : <button onClick={() => setResetConfirm(true)} style={{ ...btnStyle, fontSize:12, padding:"4px 12px", color:C.red, border:"1px solid #FECACA", background:C.redBg }}>🗑 Reset month</button>}
+          </div>}
+        </div>
+       {allExpenses.length>0 && <div style={{ ...cardStyle, background:settlement.diff===0?C.greenBg:C.card }}>
+          <div style={{ fontWeight:700, fontSize:16, marginBottom:14 }}>📊 {MONTHS[month]} Settlement</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:16 }}>
+            {[{label:person1+" paid",value:settlement.p1Paid,color:C.p1},{label:person2+" paid",value:settlement.p2Paid,color:C.p2},{label:"Total",value:settlement.total,color:C.text}].map(({label,value,color}) =>
+              <div key={label} style={{ background:C.bg, borderRadius:10, padding:"12px 14px" }}>
+                <div style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", marginBottom:4 }}>{label}</div>
+                <div style={{ fontSize:20, fontWeight:800, color }}>{fmt(value)}</div>
+              </div>)}
+          </div>
+          <div style={{ background:settlement.diff===0?C.greenBg:settlement.diff>0?"#EFF6FF":"#FFF7ED", border:"1px solid "+(settlement.diff===0?"#86EFAC":settlement.diff>0?"#BFDBFE":"#FED7AA"), borderRadius:10, padding:"12px 16px", fontSize:15, fontWeight:700, color:settlement.diff===0?C.green:C.text }}>
+            {settlement.diff===0 ? "✅ You're perfectly even!"
+              : settlement.diff>0 ? <><span style={{color:C.p2}}>{person2}</span> owes <span style={{color:C.p1}}>{person1}</span> <span style={{color:C.green}}>{fmt(settlement.diff)}</span></>
+              : <><span style={{color:C.p1}}>{person1}</span> owes <span style={{color:C.p2}}>{person2}</span> <span style={{color:C.green}}>{fmt(settlement.diff)}</span></>}
+          </div>
+        </div>}
+        {allExpenses.length===0
+          ? <div style={{ ...cardStyle, textAlign:"center", color:C.muted, padding:"40px 24px" }}>
+              <div style={{ fontSize:36, marginBottom:8 }}>🧾</div>
+              <div style={{ fontWeight:600 }}>No expenses for {MONTHS[month]} {year}</div>
+            </div>
+          : <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {allExpenses.map(ex => <div key={ex.id} style={{ ...cardStyle, marginBottom:0, padding:"14px 18px", display:"flex", alignItems:"flex-start", gap:14, ...(ex.isRecurring?{border:"1px solid "+C.rBorder,background:C.rBg}:{}), ...(ex.splitType==="full"?{border:"1px solid "+C.fBorder}:{}) }}>
+                <div style={{ width:40, height:40, borderRadius:10, background:colorOf(ex.paidBy)+"20", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:14, color:colorOf(ex.paidBy), flexShrink:0 }}>
+                  {nameOf(ex.paidBy).slice(0,1).toUpperCase()}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                    <span style={{ fontWeight:700, fontSize:15 }}>{ex.description}</span>
+                    <Badge category={ex.category} />
+                    {ex.isRecurring && <span style={{ fontSize:11, fontWeight:700, color:"#3730A3", background:C.rBorder, borderRadius:10, padding:"2px 8px" }}>🔁 Recurring</span>}
+                    {ex.splitType==="full" && <span style={{ fontSize:11, fontWeight:700, color:"#92400E", background:C.fBorder, borderRadius:10, padding:"2px 8px" }}>💯 {nameOf(ex.chargedTo)}</span>}
+                  </div>
+                  <div style={{ fontSize:13, color:C.muted, marginTop:2 }}>
+                    {ex.isRecurring ? "Every month" : new Date(ex.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                    {" · Paid by "}<span style={{ color:colorOf(ex.paidBy), fontWeight:600 }}>{nameOf(ex.paidBy)}</span>
+                  </div>
+                  {ex.note && <div style={{ marginTop:6, fontSize:12, color:C.muted, background:"#fff", borderRadius:6, padding:"6px 10px", borderLeft:"3px solid "+C.border }}>{ex.note}</div>}
+                  <AttachmentView attachment={ex.attachment} />
+                </div>
+                <div style={{ textAlign:"right", flexShrink:0 }}>
+                  <div style={{ fontWeight:800, fontSize:18 }}>{fmt(ex.amount)}</div>
+                  {!ex.isRecurring && <div style={{ display:"flex", gap:6, marginTop:6, justifyContent:"flex-end" }}>
+                    <button onClick={() => startEdit(ex)} style={{ ...btnStyle, fontSize:12, padding:"3px 10px", background:C.bg, border:"1px solid "+C.border }}>Edit</button>
+                    {delConfirm===ex.id
+                      ? <><button onClick={() => { setExpenses(p => p.filter(x => x.id!==ex.id)); setDelConfirm(null); setSyncStatus("idle"); }} style={{ ...btnStyle, fontSize:12, padding:"3px 10px", background:C.red, color:"#fff" }}>Confirm</button>
+                         <button onClick={() => setDelConfirm(null)} style={{ ...btnStyle, fontSize:12, padding:"3px 10px" }}>Cancel</button></>
+                      : <button onClick={() => setDelConfirm(ex.id)} style={{ ...btnStyle, fontSize:12, padding:"3px 10px", color:C.red, border:"1px solid #FECACA", background:C.redBg }}>Delete</button>}
+                  </div>}
+                </div>
+              </div>)}
+            </div>}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
